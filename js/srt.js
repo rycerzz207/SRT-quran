@@ -1,6 +1,7 @@
 // srt.js — pure logic, no DOM access except generateSRT()
 
-// Local stub — real setStatus is in ui.js
+import { loadPreview } from './preview.js';
+
 function setStatus(msg, isError = false) {
   console.log(isError ? '[ERROR]' : '[INFO]', msg);
 }
@@ -37,15 +38,7 @@ export async function fetchTimings(recitation_id, surahId) {
 }
 
 // Build subtitle segments from local verse + timing data
-// verses: [{ verse_number, words: ["word1", "word2", ...] }]
-// timings: [{ verse_number, segments: [{ word_index, start_ms, end_ms }] }]
 export function buildSubtitleSegments(verses, timings, startAyah, endAyah) {
-  console.log("=== DEBUG ===");
-  console.log("Verses type:", typeof verses);
-  console.log("Timings type:", typeof timings);
-  console.log("First verse:", verses?.[0]);
-  console.log("First timing:", timings?.[0]);
-
   const PAUSE_MARKERS = ['ۖ', 'ۗ', 'ۘ', 'ۙ', 'ۚ', 'ۛ'];
   const segments = [];
 
@@ -53,38 +46,11 @@ export function buildSubtitleSegments(verses, timings, startAyah, endAyah) {
     const verse = verses.find(v => v.verse_number === ayah);
     const timing = timings.find(t => t.verse_number === ayah);
 
-    console.log(`Ayah ${ayah}`);
-    console.log("Verse found:", !!verse);
-    console.log("Timing found:", !!timing);
-
-    if (!verse) {
-      console.warn(`Missing verse ${ayah}`);
-      continue;
-    }
-
-    if (!timing) {
-      console.warn(`Missing timing ${ayah}`);
-      continue;
-    }
-
-    console.log("Verse object:", verse);
-    console.log("Timing object:", timing);
+    if (!verse || !timing) continue;
 
     const words = verse.words || [];
     const segs = timing.segments || [];
-
-    console.log("Words count:", words.length);
-    console.log("Segments count:", segs.length);
-
-    if (!words.length) {
-      console.warn(`Ayah ${ayah} has no words`);
-      continue;
-    }
-
-    if (!segs.length) {
-      console.warn(`Ayah ${ayah} has no timing segments`);
-      continue;
-    }
+    if (!words.length || !segs.length) continue;
 
     const timingMap = {};
     segs.forEach(s => {
@@ -102,22 +68,14 @@ export function buildSubtitleSegments(verses, timings, startAyah, endAyah) {
       }
     });
 
-    if (currentLine.length) {
-      lines.push(currentLine);
-    }
+    if (currentLine.length) lines.push(currentLine);
 
     lines.forEach((line, lineIdx) => {
       const text = line.map(w => w.word).join(" ");
       const firstTiming = timingMap[line[0].idx];
       const lastTiming = timingMap[line[line.length - 1].idx];
 
-      console.log("First timing:", firstTiming);
-      console.log("Last timing:", lastTiming);
-
-      if (!firstTiming || !lastTiming) {
-        console.warn(`Timing missing for ayah ${ayah}`);
-        return;
-      }
+      if (!firstTiming || !lastTiming) return;
 
       const isLast = lineIdx === lines.length - 1;
       segments.push({
@@ -128,7 +86,6 @@ export function buildSubtitleSegments(verses, timings, startAyah, endAyah) {
     });
   }
 
-  console.log("Generated segments:", segments.length);
   return segments;
 }
 
@@ -158,7 +115,41 @@ export function downloadSRT(content, filename) {
   a.download = filename;
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+/* =========================
+   FIX: AUDIO PREVIEW SYSTEM
+   ========================= */
+
+async function fetchAudioBlob(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch audio: ${url}`);
+  const blob = await response.blob();
+  const duration = await getBlobDuration(blob);
+  return { blob, duration };
+}
+
+function getBlobDuration(blob) {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio();
+    const blobUrl = URL.createObjectURL(blob);
+
+    audio.addEventListener('loadedmetadata', () => {
+      URL.revokeObjectURL(blobUrl);
+      resolve(audio.duration);
+    });
+
+    audio.addEventListener('error', () => {
+      URL.revokeObjectURL(blobUrl);
+      reject(new Error('Failed to read audio duration'));
+    });
+
+    audio.src = blobUrl;
+  });
 }
 
 // Main generate function — called from ui.js button
@@ -171,39 +162,72 @@ export async function generateSRT() {
   const btn = document.getElementById('renderBtn');
 
   if (!surahId || !startAyah || !endAyah || !rec) {
-    setStatus('Please fill in all fields.', true); return;
+    setStatus('Please fill in all fields.', true);
+    return;
   }
 
   btn.disabled = true;
+
   try {
     setStatus('Loading verses...');
     const verses = await fetchVerses(surahId);
 
     setStatus('Reading audio durations...');
+
     const segments = [];
-    let cursor = 0;
+    const audioBlobs = [];
+    const durations = [];
 
     for (let ayah = startAyah; ayah <= endAyah; ayah++) {
       const verse = verses.find(v => v.verse_number === ayah);
       if (!verse) continue;
 
       const url = `https://everyayah.com/data/${rec.folder}/${String(surahId).padStart(3, '0')}${String(ayah).padStart(3, '0')}.mp3`;
-      const duration = await getAudioDuration(url);
+
+      const { blob, duration } = await fetchAudioBlob(url);
+
+      audioBlobs.push(blob);
+      durations.push(duration || 0);
+    }
+
+    // ===============================
+    // STABLE TIMELINE BUILDER FIX
+    // ===============================
+    let cursor = 0;
+    const GAP = 250;
+
+    for (let i = 0; i < audioBlobs.length; i++) {
+      const verse = verses.find(v => v.verse_number === startAyah + i);
+      if (!verse) continue;
+
+      const duration = durations[i] || 0;
+
       const start_ms = cursor;
       const end_ms = cursor + Math.round(duration * 1000);
-      cursor = end_ms + 300; // 300ms gap between ayahs
 
-      const text = verse.words.join(' ') + ` ﴿${ayah}﴾`;
-      segments.push({ text, start_ms, end_ms });
+      segments.push({
+        text: verse.words.join(' ') + ` ﴿${startAyah + i}﴾`,
+        start_ms,
+        end_ms
+      });
+
+      cursor = end_ms + GAP;
     }
 
     if (segments.length === 0) {
-      setStatus('No verses found in this range.', true); return;
+      setStatus('No verses found in this range.', true);
+      return;
     }
 
     setStatus('Generating SRT...');
     const srtContent = generateSRTContent(segments);
     downloadSRT(srtContent, `quran_${surahId}_${startAyah}-${endAyah}.srt`);
+
+    const combinedBlob = new Blob(audioBlobs, { type: 'audio/mpeg' });
+    const previewAudioSrc = URL.createObjectURL(combinedBlob);
+
+    loadPreview(segments, previewAudioSrc, cursor);
+
     setStatus('Done! Import the SRT into CapCut with your video and audio.');
 
   } catch (err) {
@@ -212,13 +236,4 @@ export async function generateSRT() {
   } finally {
     btn.disabled = false;
   }
-}
-
-function getAudioDuration(url) {
-  return new Promise((resolve, reject) => {
-    const audio = new Audio();
-    audio.addEventListener('loadedmetadata', () => resolve(audio.duration));
-    audio.addEventListener('error', () => reject(new Error(`Failed to load audio: ${url}`)));
-    audio.src = url;
-  });
 }

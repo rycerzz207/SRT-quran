@@ -66,17 +66,33 @@ export function surahChanged() {
 }
 
 // Update audio preview when reciter or ayah range changes
-export function updateAudioPreview() {
+export async function updateAudioPreview() {
   const recSelect = document.getElementById('reciterSelect');
-  const recIdx = recSelect.value;
-  const rec = RECITERS[recIdx];
+  const rec = RECITERS[recSelect.value];
   if (!rec) return;
+
   const surahId = document.getElementById('surahSelect').value;
-  const ayahStart = document.getElementById('ayahFrom').value || 1;
-  // Build URL for first ayah audio
-  const url = `https://everyayah.com/data/${rec.folder}/${String(surahId).padStart(3, '0')}${String(ayahStart).padStart(3, '0')}.mp3`;
+  const startAyah = parseInt(document.getElementById('ayahFrom').value) || 1;
+  const endAyah = parseInt(document.getElementById('ayahTo').value) || startAyah;
   const audio = document.getElementById('audioPreview');
-  audio.src = url;
+
+  // Reset while loading
+  audio.src = '';
+
+  try {
+    const blobs = [];
+    for (let ayah = startAyah; ayah <= endAyah; ayah++) {
+      const url = `https://everyayah.com/data/${rec.folder}/${String(surahId).padStart(3, '0')}${String(ayah).padStart(3, '0')}.mp3`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      blobs.push(await resp.blob());
+    }
+    if (blobs.length === 0) return;
+    const combined = new Blob(blobs, { type: 'audio/mpeg' });
+    audio.src = URL.createObjectURL(combined);
+  } catch (err) {
+    console.error('Audio preview error:', err);
+  }
 }
 
 // Set up event listeners
