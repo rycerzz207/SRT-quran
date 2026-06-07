@@ -1,6 +1,8 @@
 // srt.js — pure logic, no DOM access except generateSRT()
 
 import { loadPreview } from './preview.js';
+let lastSRTContent = '';
+let lastSRTFilename = '';
 
 function setStatus(msg, isError = false) {
   console.log(isError ? '[ERROR]' : '[INFO]', msg);
@@ -221,12 +223,17 @@ export async function generateSRT() {
 
     setStatus('Generating SRT...');
     const srtContent = generateSRTContent(segments);
-    downloadSRT(srtContent, `quran_${surahId}_${startAyah}-${endAyah}.srt`);
+    lastSRTContent = srtContent;
+    lastSRTFilename = `quran_${surahId}_${startAyah}-${endAyah}.srt`;
+    document.getElementById('downloadBtn').style.display = 'block';
+
 
     const combinedBlob = new Blob(audioBlobs, { type: 'audio/mpeg' });
     const previewAudioSrc = URL.createObjectURL(combinedBlob);
 
     loadPreview(segments, previewAudioSrc, cursor);
+
+
 
     setStatus('Done! Import the SRT into CapCut with your video and audio.');
 
@@ -236,4 +243,11 @@ export async function generateSRT() {
   } finally {
     btn.disabled = false;
   }
+}
+
+export { lastSRTContent, lastSRTFilename };
+
+export function downloadLastSRT() {
+  if (!lastSRTContent) return;
+  downloadSRT(lastSRTContent, lastSRTFilename);
 }

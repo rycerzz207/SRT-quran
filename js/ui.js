@@ -11,23 +11,19 @@ export function setStatus(msg, isError = false) {
 // Fetch surahs list from Quran.com API and populate selector
 export async function fetchSurahs() {
   try {
-    const resp = await fetch('https://api.quran.com/api/v4/chapters?language=en');
-    const data = await resp.json();
-    if (!data || !data.chapters) throw new Error('Invalid surah response');
-    // We'll store surahs in a global variable for use in surahChanged
-    // Since we are using modules, we can attach to window or use a shared object.
-    // For simplicity, we'll attach to window (as the original did with state.surahs)
+    const resp = await fetch('data/surahs.json');
+    if (!resp.ok) throw new Error('Failed to load surahs.json');
+    const surahs = await resp.json();
     window.state = window.state || {};
-    window.state.surahs = data.chapters;
+    window.state.surahs = surahs;
     const select = document.getElementById('surahSelect');
     select.innerHTML = '';
-    data.chapters.forEach(ch => {
+    surahs.forEach(ch => {
       const option = document.createElement('option');
       option.value = ch.id;
-      option.textContent = `${ch.id}. ${ch.name_arabic} — ${ch.name_simple} (${ch.verses_count} verses)`;
+      option.textContent = `${ch.id}. ${ch.name_arabic} — ${ch.name_english} (${ch.verses_count} verses)`;
       select.appendChild(option);
     });
-    // Trigger update for ayah range defaults
     surahChanged();
   } catch (err) {
     setStatus('Failed to load surahs: ' + err.message, true);

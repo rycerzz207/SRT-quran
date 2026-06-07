@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Quran Reel Creator</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div class="container">
     <h1>Quran Reel Creator</h1>
@@ -32,10 +34,11 @@
     <input type="file" id="bgUpload" accept=".mp4,.mov,.webm" />
 
     <button id="renderBtn">Generate SRT</button>
-
+    <button id="downloadBtn" style="display:none">Download SRT</button>
     <div id="status"></div>
   </div>
   <script type="module" src="js/app.js"></script>
   <script type="module" src="js/preview.js"></script>
 </body>
+
 </html>
