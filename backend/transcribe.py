@@ -4,7 +4,7 @@ from faster_whisper import WhisperModel
 
 print("[transcribe] Loading Whisper base model...")
 model = WhisperModel(
-    "C:\\Program Files (x86)\\Kiddo\\quran reel maker\\backend\\models\\base",
+    "C:\\Program Files (x86)\\Kiddo\\quran reel maker\\backend\\models\\small",
     device="cpu",
     compute_type="int8"
 )

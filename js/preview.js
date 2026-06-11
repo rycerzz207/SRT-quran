@@ -1,58 +1,75 @@
-// preview.js — SRT preview player
+// preview.js — live video + subtitle preview only
 
 let previewAudio = null;
 let previewSegments = [];
 let animFrame = null;
 let lastSegIndex = -1;
-let totalDuration = 0; // ms — passed from srt.js since blob has no reliable duration
+let totalDuration = 0;
 let injected = false;
 
+/* ------------------------------------------------------------------
+   STYLES
+   ------------------------------------------------------------------ */
 function injectStyles() {
   if (document.getElementById('preview-styles')) return;
   const style = document.createElement('style');
   style.id = 'preview-styles';
   style.textContent = `
-    #previewPanel {
-      margin-top: 24px;
+    #livePreviewPanel {
+      margin-top: 16px;
       border-radius: 12px;
       overflow: hidden;
-      border: 1px solid #333;
+      border: 1px solid #444;
+      display: none;
     }
-    #previewScreen {
-      background: #000;
+    #livePreviewLabel {
+      background: #1a1a1a;
+      color: #888;
+      font-size: 12px;
+      padding: 6px 12px;
+      text-align: center;
+      letter-spacing: 0.05em;
+    }
+    #livePreviewScreen {
+      position: relative;
       width: 100%;
       aspect-ratio: 9/16;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      box-sizing: border-box;
+      background: #000;
+      overflow: hidden;
     }
-    #previewText {
-      font-family: 'Amiri', serif;
-      font-size: 22px;
-      color: white;
+    #livePreviewVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    #liveSubtitleOverlay {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
       text-align: center;
       direction: rtl;
-      line-height: 1.8;
-      margin: 0;
-      transition: opacity 0.3s ease;
+      pointer-events: none;
+      font-family: 'Amiri', serif;
+      transition: opacity 0.2s ease;
+      bottom: 5%;
     }
-    #previewControls {
+    #livePreviewControls {
       background: #111;
-      padding: 12px 16px;
+      padding: 10px 16px;
       display: flex;
       align-items: center;
       gap: 12px;
     }
-    #previewPlayBtn {
+    #livePlayBtn {
       width: auto;
       margin: 0;
       padding: 8px 16px;
       font-size: 14px;
       flex-shrink: 0;
     }
-    #previewBar {
+    #livePreviewBar {
       flex: 1;
       height: 6px;
       background: #333;
@@ -60,14 +77,14 @@ function injectStyles() {
       cursor: pointer;
       position: relative;
     }
-    #previewProgress {
+    #livePreviewProgress {
       height: 100%;
       background: #22c55e;
       border-radius: 3px;
       width: 0%;
       pointer-events: none;
     }
-    #previewTime {
+    #livePreviewTime {
       font-size: 12px;
       color: #aaa;
       flex-shrink: 0;
@@ -79,50 +96,69 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
+/* ------------------------------------------------------------------
+   HTML
+   ------------------------------------------------------------------ */
 function injectHTML() {
-  if (document.getElementById('previewPanel')) return;
+  if (document.getElementById('livePreviewPanel')) return;
+
   const panel = document.createElement('div');
-  panel.id = 'previewPanel';
-  panel.style.display = 'none';
+  panel.id = 'livePreviewPanel';
   panel.innerHTML = `
-    <div id="previewScreen">
-      <p id="previewText"></p>
+    <div id="livePreviewLabel">LIVE PREVIEW — adjust style before rendering</div>
+    <div id="livePreviewScreen">
+      <video id="livePreviewVideo" loop playsinline></video>
+      <div id="liveSubtitleOverlay"></div>
     </div>
-    <div id="previewControls">
-      <button id="previewPlayBtn">▶ Play</button>
-      <div id="previewBar">
-        <div id="previewProgress"></div>
+    <div id="livePreviewControls">
+      <button id="livePlayBtn">▶ Play</button>
+      <div id="livePreviewBar">
+        <div id="livePreviewProgress"></div>
       </div>
-      <span id="previewTime">0:00 / 0:00</span>
+      <span id="livePreviewTime">0:00 / 0:00</span>
     </div>
   `;
+
+  // Insert after renderBtn
   const btn = document.getElementById('renderBtn');
   btn.parentNode.insertBefore(panel, btn.nextSibling);
 }
 
+/* ------------------------------------------------------------------
+   INIT
+   ------------------------------------------------------------------ */
 export function initPreview() {
   if (injected) return;
   injectStyles();
   injectHTML();
 
-  document.getElementById('previewPlayBtn').addEventListener('click', togglePlay);
+  document.getElementById('livePlayBtn').addEventListener('click', togglePlay);
 
-  document.getElementById('previewBar').addEventListener('click', (e) => {
+  document.getElementById('livePreviewBar').addEventListener('click', e => {
     if (!previewAudio || !totalDuration) return;
-    const bar = document.getElementById('previewBar');
-    const rect = bar.getBoundingClientRect();
+    const rect = document.getElementById('livePreviewBar').getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    // Use our known total duration — don't trust audio.duration on concatenated blobs
     previewAudio.currentTime = ratio * (totalDuration / 1000);
     updateDisplay();
   });
 
+  // Live style controls
+  ['subtitleColor', 'outlineColor', 'fontSizeSlider', 'subtitlePosition'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', applyLiveSubtitleStyle);
+  });
+
+  // Background video input
+  document.getElementById('bgVideoInput')?.addEventListener('change', onBgVideoSelected);
+
+  // Show panel immediately — video loads when user picks a file
+  document.getElementById('livePreviewPanel').style.display = 'block';
+
   injected = true;
 }
 
-// segments: [{ text, start_ms, end_ms }]
-// audioSrc: blob URL of concatenated MP3
-// durationMs: total duration in ms (calculated in srt.js)
+/* ------------------------------------------------------------------
+   LOAD PREVIEW (called after ASS generation)
+   ------------------------------------------------------------------ */
 export function loadPreview(segments, audioSrc, durationMs) {
   initPreview();
 
@@ -130,42 +166,112 @@ export function loadPreview(segments, audioSrc, durationMs) {
   totalDuration = durationMs;
   lastSegIndex = -1;
 
-  if (previewAudio) {
-    previewAudio.pause();
-    previewAudio.src = '';
-  }
-
+  if (previewAudio) { previewAudio.pause(); previewAudio.src = ''; }
   previewAudio = new Audio(audioSrc);
   previewAudio.addEventListener('ended', onEnded);
 
-  document.getElementById('previewPanel').style.display = 'block';
-  document.getElementById('previewProgress').style.width = '0%';
-  document.getElementById('previewPlayBtn').textContent = '▶ Play';
-  document.getElementById('previewTime').textContent =
+  document.getElementById('livePreviewTime').textContent =
     `0:00 / ${formatTime(totalDuration / 1000)}`;
+  document.getElementById('livePreviewProgress').style.width = '0%';
+  document.getElementById('livePlayBtn').textContent = '▶ Play';
 
+  // Show first subtitle
   if (segments.length > 0) {
-    document.getElementById('previewText').textContent = segments[0].text;
+    const overlay = document.getElementById('liveSubtitleOverlay');
+    if (overlay) overlay.textContent = segments[0].text;
+  }
+
+  applyLiveSubtitleStyle();
+
+  // Show panel if bg video already loaded
+  const vid = document.getElementById('livePreviewVideo');
+  if (vid && vid.src) {
+    document.getElementById('livePreviewPanel').style.display = 'block';
+  }
+}
+
+/* ------------------------------------------------------------------
+   BG VIDEO SELECTED — show live preview immediately
+   ------------------------------------------------------------------ */
+function onBgVideoSelected(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  initPreview();
+
+  const vid = document.getElementById('livePreviewVideo');
+  vid.src = URL.createObjectURL(file);
+  vid.muted = true;
+  vid.play().catch(() => { });
+
+  document.getElementById('livePreviewPanel').style.display = 'block';
+  applyLiveSubtitleStyle();
+
+  // Show first subtitle if ASS already generated
+  if (previewSegments.length > 0) {
+    const overlay = document.getElementById('liveSubtitleOverlay');
+    if (overlay) overlay.textContent = previewSegments[0].text;
+  }
+
+  console.log('[preview] BG video loaded into live preview.');
+}
+
+/* ------------------------------------------------------------------
+   APPLY SUBTITLE STYLE TO OVERLAY
+   ------------------------------------------------------------------ */
+function applyLiveSubtitleStyle() {
+  const overlay = document.getElementById('liveSubtitleOverlay');
+  if (!overlay) return;
+
+  const color = document.getElementById('subtitleColor')?.value || '#ffffff';
+  const outline = document.getElementById('outlineColor')?.value || '#000000';
+  const size = document.getElementById('fontSizeSlider')?.value || '22';
+  const position = document.getElementById('subtitlePosition')?.value || '2';
+
+  overlay.style.color = color;
+  overlay.style.fontSize = `${size}px`;
+  overlay.style.textShadow = `2px 2px 5px ${outline}, -1px -1px 3px ${outline}`;
+
+  if (position === '8') {
+    overlay.style.top = '5%';
+    overlay.style.bottom = 'auto';
+    overlay.style.transform = 'translateX(-50%)';
+  } else if (position === '5') {
+    overlay.style.top = '50%';
+    overlay.style.bottom = 'auto';
+    overlay.style.transform = 'translate(-50%, -50%)';
+  } else {
+    overlay.style.bottom = '5%';
+    overlay.style.top = 'auto';
+    overlay.style.transform = 'translateX(-50%)';
+  }
+}
+
+/* ------------------------------------------------------------------
+   PLAYBACK
+   ------------------------------------------------------------------ */
+function togglePlay() {
+  if (!previewAudio) return;
+
+  const vid = document.getElementById('livePreviewVideo');
+
+  if (previewAudio.paused) {
+    previewAudio.play();
+    vid?.play().catch(() => { });
+    document.getElementById('livePlayBtn').textContent = '⏸ Pause';
+    animFrame = requestAnimationFrame(updateLoop);
+  } else {
+    previewAudio.pause();
+    vid?.pause();
+    document.getElementById('livePlayBtn').textContent = '▶ Play';
+    cancelAnimationFrame(animFrame);
   }
 }
 
 function onEnded() {
-  document.getElementById('previewPlayBtn').textContent = '▶ Play';
-  document.getElementById('previewProgress').style.width = '100%';
+  document.getElementById('livePlayBtn').textContent = '▶ Play';
+  document.getElementById('livePreviewProgress').style.width = '100%';
   cancelAnimationFrame(animFrame);
-}
-
-function togglePlay() {
-  if (!previewAudio) return;
-  if (previewAudio.paused) {
-    previewAudio.play();
-    document.getElementById('previewPlayBtn').textContent = '⏸ Pause';
-    animFrame = requestAnimationFrame(updateLoop);
-  } else {
-    previewAudio.pause();
-    document.getElementById('previewPlayBtn').textContent = '▶ Play';
-    cancelAnimationFrame(animFrame);
-  }
+  document.getElementById('livePreviewVideo')?.pause();
 }
 
 function updateLoop() {
@@ -178,32 +284,26 @@ function updateDisplay() {
   const currentMs = previewAudio.currentTime * 1000;
   const total = totalDuration || 1;
 
-  // Find active segment
   let activeIndex = -1;
   for (let i = previewSegments.length - 1; i >= 0; i--) {
-    if (currentMs >= previewSegments[i].start_ms) {
-      activeIndex = i;
-      break;
+    if (currentMs >= previewSegments[i].start_ms) { activeIndex = i; break; }
+  }
+
+  if (activeIndex !== lastSegIndex && activeIndex >= 0) {
+    lastSegIndex = activeIndex;
+    const overlay = document.getElementById('liveSubtitleOverlay');
+    if (overlay) {
+      overlay.style.opacity = '0';
+      setTimeout(() => {
+        overlay.textContent = previewSegments[activeIndex].text;
+        overlay.style.opacity = '1';
+      }, 150);
     }
   }
 
-  // Update text only when segment changes
-  if (activeIndex !== lastSegIndex && activeIndex >= 0) {
-    lastSegIndex = activeIndex;
-    const el = document.getElementById('previewText');
-    el.style.opacity = '0';
-    setTimeout(() => {
-      el.textContent = previewSegments[activeIndex].text;
-      el.style.opacity = '1';
-    }, 150);
-  }
-
-  // Progress bar — use our known total duration
-  document.getElementById('previewProgress').style.width =
+  document.getElementById('livePreviewProgress').style.width =
     `${Math.min(100, (currentMs / total) * 100)}%`;
-
-  // Time display
-  document.getElementById('previewTime').textContent =
+  document.getElementById('livePreviewTime').textContent =
     `${formatTime(currentMs / 1000)} / ${formatTime(total / 1000)}`;
 }
 
